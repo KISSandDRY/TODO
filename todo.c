@@ -227,9 +227,9 @@ static inline void new_todo(todo_t** todos, int* todo_index) {
     (*todos)[*todo_index].description = NULL;
 }
 
-static inline void skip_space(const char* str, int* no_lines) {
+static inline void skip_space(const char* str, int* line_number) {
     while(isspace(*str) && *str) { 
-        if(*str == '\n') *no_lines += 1; 
+        if(*str == '\n') *line_number += 1; 
 
         ++str; 
     } 
