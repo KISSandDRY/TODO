@@ -12,29 +12,6 @@
 #define FLAG_IDENTIFIER "-"
 #define TODO_FILE_NAME "TODO"
 
-#define NEW_TODO(todos, index) \
-    if(!todos) todos = malloc(sizeof(todo_t)); \
-    else todos = realloc(todos, sizeof(todo_t)*(no_todos+1)); \
-    todos[index].priority = 0; \
-    todos[index].title = NULL; \
-    todos[index].description = NULL;
-
-
-#define SHOW_ERROR \
-        offset = find_nth_occurrence(str, '\n', no_lines-1); \
-        printf("%ld | ", no_lines); \
-        print_until_symbol(str+offset+1, '\n'); \
-        printf("\n"); \
-        offset = buf-str-offset+get_long_length(no_lines)+2; \
-        while(offset-->0) printf(" "); \
-        printf("^\n");
-
-#define SKIP_SPACE_COUNT_LINE \
-        while(isspace(*buf)) { \
-            if(*buf == '\n') ++no_lines; \
-            ++buf; \
-        } 
-
 #define FLAG_DESCRIPTION_LEN 128
 
 typedef enum FLAG_TYPES {
@@ -86,7 +63,7 @@ typedef struct {
     long priority;
 } todo_t;
 
-char* strip(const char *str) {
+static char* strip(const char *str) {
     if(!str) return NULL;
 
     size_t begin = 0, end = strlen(str);
@@ -111,10 +88,10 @@ char* strip(const char *str) {
     return trimmed_str;
 }
 
-long get_long_length(long num) {
+static int get_number_length(int num) {
     if (!num) return 1; 
 
-    long length = 0;
+    int length = 0;
 
     if (num < 0)  num = -num;
 
@@ -123,7 +100,7 @@ long get_long_length(long num) {
     return length;
 }
 
-char* read_file(const char *file_name) {
+static char* read_file(const char *file_name) {
     if(!file_name) return NULL;
 
     FILE *file = fopen(file_name, "rb");
@@ -175,22 +152,15 @@ char* read_file(const char *file_name) {
     return buffer;
 }
 
-bool ends_with(const char* str, const char* suffix) {
-    if (!str || !suffix) return false; 
-    
-    size_t str_len = strlen(str), suffix_len = strlen(suffix);
-    if (suffix_len > str_len) return false;
-
-    return !strncmp(str + str_len - suffix_len, suffix, suffix_len);
-}
-
-bool starts_with(const char* str, const char* prefix) {
+static bool starts_with(const char* str, const char* prefix) {
     size_t prefix_len = strlen(prefix);
 
     return !strncmp(str, prefix, prefix_len);
 }
 
-int find_nth_occurrence(const char *str, char ch, int n) {
+static int find_nth_occurrence(const char *str, char ch, int n) {
+    if(!n) return -1;
+
     int count = 0, index = -1; 
 
     for (int i = 0; str[i]; i++) {
@@ -206,7 +176,7 @@ int find_nth_occurrence(const char *str, char ch, int n) {
     return index;
 }
 
-size_t is_num(const char* str) {
+static int is_num(const char* str) {
     const char* buf = str;
 
     while(*buf) {
@@ -222,7 +192,7 @@ size_t is_num(const char* str) {
     return buf-str;
 }
 
-void print_until_symbol(const char *str, char symbol) {
+static void print_until_symbol(const char *str, char symbol) {
     const char *pos = strchr(str, symbol);
 
     if (pos) {
@@ -234,31 +204,60 @@ void print_until_symbol(const char *str, char symbol) {
     printf("%s", str);
 }
 
-todo_t* get_todos(const char* str) {
+static inline void show_error(const char* str, const char* processed_str, int line_number) {
+    int offset = find_nth_occurrence(str, '\n', line_number - 1);
+
+    printf("%d | ", line_number); 
+    print_until_symbol(str + offset + 1, '\n'); 
+    printf("\n"); 
+
+    offset = processed_str - str - offset + get_number_length(line_number) + 2; 
+    while(offset-->0) printf(" "); 
+    printf("^\n");
+}
+
+static inline void new_todo(todo_t** todos, int* todo_index) {
+    if(!todos) return;
+
+    if(!*todos) *todos = malloc(sizeof(todo_t)); 
+    else *todos = realloc(*todos, sizeof(todo_t) * (*todo_index + 1));
+
+    (*todos)[*todo_index].priority = 0; 
+    (*todos)[*todo_index].title = NULL;
+    (*todos)[*todo_index].description = NULL;
+}
+
+static inline void skip_space(const char* str, int* no_lines) {
+    while(isspace(*str) && *str) { 
+        if(*str == '\n') *no_lines += 1; 
+
+        ++str; 
+    } 
+}
+
+static todo_t* get_todos(const char* str) {
     if(!str) return NULL;
 
-    size_t no_todos = 0;
+    int todo_index = 0;
     todo_t* todos = NULL;
 
-    long offset = 0;
-    size_t no_lines = 1, token_len = 0;
+    int line_number = 1, token_len = 0;
     const char* buf = str;
 
     while(*buf) {
-        SKIP_SPACE_COUNT_LINE;
+        skip_space(buf, &line_number);
 
-        offset = 0;
         token_len = 0;
 
         if(starts_with(buf, "TODO") && *buf) {
-            NEW_TODO(todos, no_todos);
+            new_todo(&todos, &todo_index);
 
             buf += strlen("TODO"); 
 
-            SKIP_SPACE_COUNT_LINE;
+            skip_space(buf, &line_number);
 
             if(*buf != ':') {
-                SHOW_ERROR;
+                show_error(str, buf, line_number);
 
                 printf("Error: expected ':'.\n");
                 exit(1);
@@ -266,11 +265,11 @@ todo_t* get_todos(const char* str) {
 
             ++buf;
             
-            SKIP_SPACE_COUNT_LINE;
+            skip_space(buf, &line_number);
 
             token_len = is_num(buf);
             if(!token_len) {
-                SHOW_ERROR;
+                show_error(str, buf, line_number);
 
                 printf("Error: priority is invalid or does not provided.\n");
                 exit(1);
@@ -286,36 +285,36 @@ todo_t* get_todos(const char* str) {
             long priority = strtol(pr_str, &endptr, 10);
 
             if (errno) {
-                SHOW_ERROR;
+                show_error(str, buf, line_number);
 
                 printf("Error: converting priority to number.\n");
                 exit(1);
             }
 
             if (*endptr) {
-                SHOW_ERROR;
+                show_error(str, buf, line_number);
 
                 printf("Error: trailing characters after priority: %s.\n", endptr);
                 exit(1);
             }
 
             if(priority <= 0) {
-                SHOW_ERROR;
+                show_error(str, buf, line_number);
 
                 printf("Error: priority is less or equal to 0.\n");
                 exit(1);
             }
 
-            todos[no_todos].priority = priority;
+            todos[todo_index].priority = priority;
 
             free(pr_str);
 
             buf += token_len;
 
-            SKIP_SPACE_COUNT_LINE;
+            skip_space(buf, &line_number);
 
             if(*buf != '"') {
-                SHOW_ERROR;
+                show_error(str, buf, line_number);
 
                 printf("Error: expected starting '\"'.\n");
                 exit(1);
@@ -325,21 +324,21 @@ todo_t* get_todos(const char* str) {
 
             size_t title_len = 0;
             while(*buf && *buf != '"') {
-                if(*buf == '\n') ++no_lines;
+                if(*buf == '\n') ++line_number;
 
                 ++title_len; 
                 ++buf;
             }
 
             if(!title_len) {
-                SHOW_ERROR;
+                show_error(str, buf, line_number);
 
                 printf("Error: title is empty.\n");
                 exit(1);
             }
 
             if(*buf != '"') {
-                SHOW_ERROR;
+                show_error(str, buf, line_number);
 
                 printf("Error: expected ending '\"'.\n");
                 exit(1);
@@ -347,14 +346,14 @@ todo_t* get_todos(const char* str) {
 
             ++buf; 
 
-            todos[no_todos].title = malloc(sizeof(char)*(title_len+1));
-            memcpy(todos[no_todos].title, buf-title_len-1, title_len);
-            todos[no_todos].title[title_len] = 0;
+            todos[todo_index].title = malloc(sizeof(char)*(title_len+1));
+            memcpy(todos[todo_index].title, buf-title_len-1, title_len);
+            todos[todo_index].title[title_len] = 0;
 
-            SKIP_SPACE_COUNT_LINE;
+            skip_space(buf, &line_number);
 
             if(!starts_with(buf, "{{")) {
-                SHOW_ERROR;
+                show_error(str, buf, line_number);
 
                 printf("Error: expected '{{'.\n");
                 exit(1);
@@ -364,13 +363,13 @@ todo_t* get_todos(const char* str) {
 
             size_t description_len = 0;
             while(*buf && !starts_with(buf, "}}")) {
-                if(*buf == '\n') ++no_lines;
+                if(*buf == '\n') ++line_number;
                 ++description_len; 
                 ++buf;
             }
 
             if(!starts_with(buf, "}}")) {
-                SHOW_ERROR;
+                show_error(str, buf, line_number);
 
                 printf("Error: expected ending '}}'.\n");
                 exit(1);
@@ -379,37 +378,36 @@ todo_t* get_todos(const char* str) {
             buf += strlen("}}");
 
             if(description_len) {
-                todos[no_todos].description = malloc(sizeof(char)*(description_len+1));
-                memcpy(todos[no_todos].description, buf-description_len-1, description_len);
-                todos[no_todos].description[description_len] = 0;
+                todos[todo_index].description = malloc(sizeof(char)*(description_len+1));
+                memcpy(todos[todo_index].description, buf-description_len-2, description_len);
+                todos[todo_index].description[description_len] = 0;
 
-                char* trimmed_description = strip(todos[no_todos].description);
+                char* trimmed_description = strip(todos[todo_index].description);
 
-                free(todos[no_todos].description);
+                free(todos[todo_index].description);
 
-                todos[no_todos].description = trimmed_description;
+                todos[todo_index].description = trimmed_description;
             }
 
-            ++no_todos;
+            ++todo_index;
 
-            SKIP_SPACE_COUNT_LINE;
+            skip_space(buf, &line_number);
 
             continue;
         } 
 
-        SHOW_ERROR;
+        show_error(str, buf, line_number);
 
-        printf("Error: expected todo start statement.\n");
+        printf("Error: expected '%s' statement.\n", "TODO");
         exit(1);
     }
 
-    NEW_TODO(todos, no_todos);
+    new_todo(&todos, &todo_index);
 
     return todos;
 }
 
-
-void sort_todos_by_title_name(todo_t* todos) {
+static void sort_todos_by_title_name(todo_t* todos) {
     int i, j, n = 0;
 
     while (todos[n].priority) n++;
@@ -425,7 +423,7 @@ void sort_todos_by_title_name(todo_t* todos) {
     }
 }
 
-void sort_todos_by_priority(todo_t* todos) {
+static void sort_todos_by_priority(todo_t* todos) {
     int i, j;
 
     for (i = 0; todos[i].priority; i++) {
@@ -440,7 +438,7 @@ void sort_todos_by_priority(todo_t* todos) {
     }
 }
 
-void print_todos(todo_t* todos) {
+static void print_todos(todo_t* todos) {
     bool todo_is_found = false;
 
     printf("TODOs:\n");
@@ -477,26 +475,28 @@ void print_todos(todo_t* todos) {
     }
 }
 
-void show_version() {
+static void show_version() {
     printf("%s version(%s)\n", NAME, VERSION);
 }
 
-void show_help() {
+static void show_help() {
     printf("%s version(%s)\n", NAME, VERSION);
 
     printf("Flags:\n");
-    for(size_t i = 0; i < sizeof(FLAGS)/sizeof(FLAGS[0]); i++) {
-        printf("'%s'\tor\t'%s'\t-\t%s\n", FLAGS[i].flag_short_str, FLAGS[i].flag_long_str, FLAGS[i].description); 
+    for(size_t i = 0; i < sizeof(FLAGS) / sizeof(FLAGS[0]); i++) {
+        printf("'%s'\tor\t'%s'\t-\t%s\n", 
+                FLAGS[i].flag_short_str, 
+                FLAGS[i].flag_long_str, 
+                FLAGS[i].description); 
     }
 }
 
-int execute_flag(flag_action_t action, char* argv[]) {
-    bool is_value_empty = false;
-    int offset = 0; 
-
+static int execute_flag(flag_action_t action, char* argv[]) {
     char* flag = *argv;
-    argv++;
+    int offset = 0; 
+    bool is_value_empty = false;
 
+    argv++;
     if(!*argv) is_value_empty = true; 
 
     switch(action) {
@@ -552,7 +552,7 @@ int execute_flag(flag_action_t action, char* argv[]) {
     return offset;
 }
 
-void check_flags(int argc, char* argv[]) {
+static void check_flags(int argc, char* argv[]) {
     bool is_defined_flag = false;
     const int no_flags = sizeof(FLAGS) / sizeof(FLAGS[0]);
 
@@ -585,7 +585,10 @@ int main(int argc, char* argv[]) {
     }
 
     FILE* todo_file = fopen(CONFIG.todo_file_name, "rb");
-    if(!todo_file) { printf("Error: '%s' file does not exist.\n", CONFIG.todo_file_name); return 1; }
+    if(!todo_file) { 
+        printf("Error: '%s' file does not exist.\n", CONFIG.todo_file_name); 
+        return 1; 
+    }
     fclose(todo_file);
 
     const char* file_content = read_file(CONFIG.todo_file_name);
