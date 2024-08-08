@@ -19,7 +19,9 @@ typedef enum FLAG_TYPES {
     SHOW_VERSION,
     SET_PRIORITY_FILTER, UNSET_PRIORITY_FILTER,
     SET_TITLE_NAME_FILTER, UNSET_TITLE_NAME_FILTER,
-    SET_PRIORITY_LEVEL 
+    SET_PRIORITY_LEVEL,
+    ADD_TODO,
+    REMOVE_TODO,
 } flag_action_t;
 
 typedef struct {
@@ -30,13 +32,15 @@ typedef struct {
 } flag_t;
 
 static const flag_t FLAGS[] = {
-    {SHOW_HELP,               FLAG_IDENTIFIER "h",   FLAG_IDENTIFIER FLAG_IDENTIFIER "help", "Shows help info."},
-    {SHOW_VERSION,            FLAG_IDENTIFIER "v",   FLAG_IDENTIFIER FLAG_IDENTIFIER "version", "Shows version."},
+    {SHOW_HELP,               FLAG_IDENTIFIER "h",   FLAG_IDENTIFIER FLAG_IDENTIFIER "help",       "Shows help info."},
+    {SHOW_VERSION,            FLAG_IDENTIFIER "v",   FLAG_IDENTIFIER FLAG_IDENTIFIER "version",    "Shows version."},
     {SET_PRIORITY_FILTER,     FLAG_IDENTIFIER "p=1", FLAG_IDENTIFIER FLAG_IDENTIFIER "priority=1", "Sets priority filter to true."},
     {UNSET_PRIORITY_FILTER,   FLAG_IDENTIFIER "p=0", FLAG_IDENTIFIER FLAG_IDENTIFIER "priority=0", "Sets priority filter to false."},
-    {SET_TITLE_NAME_FILTER,   FLAG_IDENTIFIER "t=1", FLAG_IDENTIFIER FLAG_IDENTIFIER "title=1", "Sets title name filter to true."},
-    {UNSET_TITLE_NAME_FILTER, FLAG_IDENTIFIER "t=0", FLAG_IDENTIFIER FLAG_IDENTIFIER "title=0", "Sets title name filter to false."},
-    {SET_PRIORITY_LEVEL,      FLAG_IDENTIFIER "l",   FLAG_IDENTIFIER FLAG_IDENTIFIER "level", "Sets title name filter to false."},
+    {SET_TITLE_NAME_FILTER,   FLAG_IDENTIFIER "t=1", FLAG_IDENTIFIER FLAG_IDENTIFIER "title=1",    "Sets title name filter to true."},
+    {UNSET_TITLE_NAME_FILTER, FLAG_IDENTIFIER "t=0", FLAG_IDENTIFIER FLAG_IDENTIFIER "title=0",    "Sets title name filter to false."},
+    {SET_PRIORITY_LEVEL,      FLAG_IDENTIFIER "l",   FLAG_IDENTIFIER FLAG_IDENTIFIER "level",      "Sets level filter. Usage: -l <number>"},
+    {ADD_TODO,                FLAG_IDENTIFIER "a",   FLAG_IDENTIFIER FLAG_IDENTIFIER "add",        "Adds new todo to the " TODO_FILE_NAME " file. Usage: -a <priority> <todo_title>"},
+    {REMOVE_TODO,             FLAG_IDENTIFIER "r",   FLAG_IDENTIFIER FLAG_IDENTIFIER "remove",     "Removes todo from the " TODO_FILE_NAME " file. Usage: -r <title_name>"}
 };
 
 enum FILTERS {
@@ -103,7 +107,7 @@ static int get_number_length(int num) {
 static char* read_file(const char *file_name) {
     if(!file_name) return NULL;
 
-    FILE *file = fopen(file_name, "rb");
+    FILE* file = fopen(file_name, "rb");
     if (!file) {
         printf("Error: '%s' file or directory does not exist.\n", file_name);
 
@@ -128,7 +132,7 @@ static char* read_file(const char *file_name) {
 
     rewind(file);
 
-    char *buffer = (char*)malloc(file_size + 1);
+    char* buffer = malloc(file_size + 1);
     if (!buffer) {
         printf("Error: allocating memory.\n");
 
@@ -180,11 +184,10 @@ static int is_num(const char* str) {
     const char* buf = str;
 
     while(*buf) {
-        if(*buf < 0x30 || *buf > 0x39) {
-            if(isspace(*buf)) break;
-            
-            return 0;
-        }   
+        if(!isdigit(*buf)) {
+            if(!isspace(*buf) && isalpha(*buf)) return 0; 
+            break;
+        }
 
         ++buf;
     }
@@ -222,20 +225,31 @@ static inline void new_todo(todo_t** todos, int* todo_index) {
     if(!*todos) *todos = malloc(sizeof(todo_t)); 
     else *todos = realloc(*todos, sizeof(todo_t) * (*todo_index + 1));
 
-    (*todos)[*todo_index].priority = 0; 
-    (*todos)[*todo_index].title = NULL;
-    (*todos)[*todo_index].description = NULL;
+    memset(*todos+*todo_index, 0, sizeof(todo_t));
 }
 
-static inline void skip_space(const char* str, int* line_number) {
-    while(isspace(*str) && *str) { 
-        if(*str == '\n') *line_number += 1; 
+static inline void skip_space(const char** str, int* line_number) {
+    if(!str) return;
 
-        ++str; 
+    while(isspace(**str) && **str) { 
+        if(**str == '\n') *line_number += 1;
+
+        *str += 1;
     } 
 }
 
-static todo_t* get_todos(const char* str) {
+static void clear_todos(todo_t* todos) {
+    if(!todos) return;
+
+    for(int i = 0; todos[i].priority; i++) {
+        free(todos[i].title);
+        free(todos[i].description);
+    }
+
+    free(todos);
+}
+
+static todo_t* parse_todos(const char* str) {
     if(!str) return NULL;
 
     int todo_index = 0;
@@ -245,7 +259,7 @@ static todo_t* get_todos(const char* str) {
     const char* buf = str;
 
     while(*buf) {
-        skip_space(buf, &line_number);
+        skip_space(&buf, &line_number);
 
         token_len = 0;
 
@@ -254,7 +268,7 @@ static todo_t* get_todos(const char* str) {
 
             buf += strlen("TODO"); 
 
-            skip_space(buf, &line_number);
+            skip_space(&buf, &line_number);
 
             if(*buf != ':') {
                 show_error(str, buf, line_number);
@@ -265,7 +279,7 @@ static todo_t* get_todos(const char* str) {
 
             ++buf;
             
-            skip_space(buf, &line_number);
+            skip_space(&buf, &line_number);
 
             token_len = is_num(buf);
             if(!token_len) {
@@ -311,7 +325,7 @@ static todo_t* get_todos(const char* str) {
 
             buf += token_len;
 
-            skip_space(buf, &line_number);
+            skip_space(&buf, &line_number);
 
             if(*buf != '"') {
                 show_error(str, buf, line_number);
@@ -350,7 +364,7 @@ static todo_t* get_todos(const char* str) {
             memcpy(todos[todo_index].title, buf-title_len-1, title_len);
             todos[todo_index].title[title_len] = 0;
 
-            skip_space(buf, &line_number);
+            skip_space(&buf, &line_number);
 
             if(!starts_with(buf, "{{")) {
                 show_error(str, buf, line_number);
@@ -391,7 +405,7 @@ static todo_t* get_todos(const char* str) {
 
             ++todo_index;
 
-            skip_space(buf, &line_number);
+            skip_space(&buf, &line_number);
 
             continue;
         } 
@@ -438,7 +452,19 @@ static void sort_todos_by_priority(todo_t* todos) {
     }
 }
 
+static todo_t* get_todos() {
+    char* file_content = read_file(CONFIG.todo_file_name);
+    if(!file_content) return NULL;
+
+    todo_t* todos = parse_todos(file_content);
+
+    free(file_content);
+    return todos;
+}
+
 static void print_todos(todo_t* todos) {
+    if(!todos) return;
+
     bool todo_is_found = false;
 
     printf("TODOs:\n");
@@ -484,20 +510,191 @@ static void show_help() {
 
     printf("Flags:\n");
     for(size_t i = 0; i < sizeof(FLAGS) / sizeof(FLAGS[0]); i++) {
-        printf("'%s'\tor\t'%s'\t-\t%s\n", 
+        printf("%4s or %-12s - %-64s\n", 
                 FLAGS[i].flag_short_str, 
                 FLAGS[i].flag_long_str, 
                 FLAGS[i].description); 
     }
 }
 
+static bool does_file_exist(const char* file_name) {
+    FILE* file = fopen(file_name, "r");
+
+    return file ? true : false;
+}
+
+static void replace_escape_sequences(char* str) {
+    char *src = str;
+    char *dst = str;
+
+    while (*src) {
+        if (*src == '\\' && *(src + 1)) {
+            switch (*(src + 1)) {
+                case 'n':
+                    *dst = '\n';
+                    src++;
+                    break;
+
+                case 't':
+                    *dst = '\t';
+                    src++;
+                    break;
+
+                case '\\':
+                    *dst = '\\';
+                    src++;
+                    break;
+
+                case '"':
+                    *dst = '"';
+                    src++;
+                    break;
+
+                case 'r':
+                    *dst = '\r';
+                    src++;
+                    break;
+
+                default:
+                    *dst = *src;
+                    break;
+            }
+        } else {
+            *dst = *src;
+        }
+
+        src++;
+        dst++;
+    }
+
+    *dst = 0; 
+}
+
+static void add_todo(todo_t* todo) {
+    if(!todo) return;
+
+    if(does_file_exist(CONFIG.todo_file_name)) {
+        todo_t* todos = get_todos();    
+
+        bool is_found = false;
+
+        for(int i = 0; todos[i].priority; i++) {
+            if(!strcmp(todo->title, todos[i].title)) {
+                is_found = true;
+                break;
+            }    
+        }
+
+        if(is_found) {
+            printf("Error: todo with title '%s' is already in todos.\n", todo->title);
+
+            clear_todos(todos);
+            exit(1);
+        }
+
+        clear_todos(todos);
+    }
+
+    FILE* todo_file = fopen(CONFIG.todo_file_name, "a+");  
+
+    if(todo->description) {
+        fprintf(todo_file, "%s:%ld \"%s\" {{\n  %s\n}}\n", "TODO", todo->priority, todo->title, todo->description);
+    } else {
+        fprintf(todo_file, "%s:%ld \"%s\" {{}}\n", "TODO", todo->priority, todo->title);
+    }
+
+    fclose(todo_file);
+}
+
+static void remove_substring(char* str, const char* sub) {
+    char* pos = strstr(str, sub); 
+
+    if (pos != NULL) {
+        size_t len = strlen(sub);
+        memmove(pos, pos + len, strlen(pos + len) + 1); 
+    }
+}
+
+int find_substring_backwards(const char* start_pos, const char* str, const char* sub) {
+    size_t sub_len = strlen(sub);
+
+    if (start_pos < str || sub_len > (size_t)(start_pos - str + 1)) return -1;
+
+    for (const char *pos = start_pos; pos >= str; pos--) {
+        if (!strncmp(pos, sub, sub_len)) {
+            return pos - str;  
+        }
+    }
+
+    return -1;
+}
+
+static int find_strict_substring(const char *str, const char *substr) {
+    int substr_len = strlen(substr);
+    int str_len = strlen(str);
+    
+    for (int i = 0; i <= str_len - substr_len; i++) {
+        if (strncmp(&str[i], substr, substr_len) == 0) {
+            if (i + substr_len == str_len || !isalnum((unsigned char)str[i + substr_len])) {
+                return i;
+            }
+        }
+    }
+
+    return -1; 
+}
+
+static void remove_todo(const char* title_name) {
+    if(!title_name) return;
+
+    todo_t* todos = get_todos();    
+    if(!todos) {
+        exit(1);
+    }
+
+    bool is_found = false;
+    for(int i = 0; todos[i].priority; i++) {
+        if(!strcmp(title_name, todos[i].title)) {
+            is_found = true;
+            break;
+        }    
+    }
+
+    if(!is_found) {
+        printf("Error: todo with title '%s' is not found.\n", title_name);
+
+        clear_todos(todos);
+        exit(1);
+    }
+
+    char* file_content = read_file(CONFIG.todo_file_name);
+
+    int start = find_substring_backwards(file_content + find_strict_substring(file_content, title_name), file_content, "TODO"), 
+        len = 0;
+
+    while(!starts_with(file_content+start+len, "}}") && *(file_content+start+len)) len++;
+    len+=2;
+
+    if(*(file_content+start+len) == '\n') ++len;
+
+    char* remove_str = malloc(sizeof(char) * (len+1));
+    strncpy(remove_str, file_content+start, len);
+    remove_str[len] = 0;
+
+    remove_substring(file_content, remove_str);
+
+    FILE* todo_file = fopen(CONFIG.todo_file_name, "w");
+    fprintf(todo_file, "%s", file_content);
+
+    free(file_content);
+    clear_todos(todos);
+}
+
 static int execute_flag(flag_action_t action, char* argv[]) {
     char* flag = *argv;
     int offset = 0; 
-    bool is_value_empty = false;
 
-    argv++;
-    if(!*argv) is_value_empty = true; 
+    ++argv;
 
     switch(action) {
         case SHOW_HELP:
@@ -525,32 +722,87 @@ static int execute_flag(flag_action_t action, char* argv[]) {
             break;
         
         case SET_PRIORITY_LEVEL:
-            if(is_value_empty) {
-                printf("Error: flag '%s' requires value.\n", flag);
+            if(!*argv) {
+                printf("Error: flag '%s' requires number value.\n", flag);
+
                 exit(1);
             }
 
-            int number = is_num(*argv);
-            if(!number) {
+            if(!is_num(*argv)) {
                 printf("Error: '%s' is invalid priority.\n", *argv);
+
                 exit(1);
             }
             
-            number = atoi(*argv);
-
             ++offset;
 
-            CONFIG.priority_level = number;
+            CONFIG.priority_level = atoi(*argv);
+            break;
 
-            return offset;
+
+        case ADD_TODO:
+            if(!*argv) {
+                printf("Error: flag '%s' requires 2 necessary values. Description is optional.\nUsage: -a <priority(number)> <title_name(string)> [description]", flag);
+
+                exit(1);
+            }
+
+            todo_t todo = {0};
+
+            if(!is_num(*argv)) {
+                printf("Error: '%s' is invalid priority.\n", *argv);
+
+                exit(1);
+            }
+            
+            todo.priority = atoi(*argv);
+
+            ++argv;
+
+            if(!*argv) {
+                printf("Error: flag '%s' requires title_name for todo.\n", flag);
+
+                exit(1);
+            }
+
+            todo.title = malloc(sizeof(char) * (strlen(*argv)+1));
+            strncpy(todo.title, *argv, strlen(*argv) + 1);
+
+            replace_escape_sequences(todo.title);
+
+            ++argv;
+
+            if(*argv) {
+                todo.description = malloc(sizeof(char) * (strlen(*argv)+1));
+                strncpy(todo.description, *argv, strlen(*argv) + 1);
+
+                replace_escape_sequences(todo.description);
+            }
+
+            add_todo(&todo);
+
+            exit(0);
+            
+            
+        case REMOVE_TODO:
+            if(!*argv) {
+                printf("Error: flag '%s' requires todo title name.\n", flag);
+
+                exit(1);
+            }
+
+            remove_todo(*argv);
+
+            exit(0);
 
         default:
-            printf("Error: undefined flag type.\n");
+            printf("Error: '%d' is undefined flag action.\n", action);
             exit(1);
     }
 
     return offset;
 }
+
 
 static void check_flags(int argc, char* argv[]) {
     bool is_defined_flag = false;
@@ -584,17 +836,11 @@ int main(int argc, char* argv[]) {
         check_flags(argc-1, argv+1);
     }
 
-    FILE* todo_file = fopen(CONFIG.todo_file_name, "rb");
-    if(!todo_file) { 
-        printf("Error: '%s' file does not exist.\n", CONFIG.todo_file_name); 
-        return 1; 
-    }
-    fclose(todo_file);
-
-    const char* file_content = read_file(CONFIG.todo_file_name);
-    todo_t* todos = get_todos(file_content);
+    todo_t* todos = get_todos();
 
     print_todos(todos);
+
+    clear_todos(todos);
 
     return 0;
 }
